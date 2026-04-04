@@ -74,3 +74,32 @@ class LiveMatchContext(BaseModel):
     match: dict[str, Any]
     squad: dict[str, Any] | None = None
     scorecard: dict[str, Any] | None = None
+
+
+class ProviderLoginRequest(BaseModel):
+    provider: str
+    identity_token: str
+    device_label: str | None = None
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+    plan_tier: str
+
+
+class AuthResponse(BaseModel):
+    user: UserResponse
+    access_token: str
+    refresh_token: str | None = None
+    token_type: str = "bearer"

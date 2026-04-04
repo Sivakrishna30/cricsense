@@ -4,3 +4,6 @@ requests==2.33.1
 pydantic==2.12.5
 python-dotenv==1.2.2
 pydantic-settings==2.13.1
+google-auth==2.41.1
+PyJWT==2.10.1
+cryptography==45.0.7

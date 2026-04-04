@@ -1,5 +1,6 @@
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query
 
+from app.auth import get_current_user_from_token, login_with_provider, refresh_session, revoke_refresh_token
 from app.live import CricApiClient
 from app.match_context import get_batter_vs_bowler, get_player_vs_opponent, get_player_vs_venue
 from app.repositories import (
@@ -11,7 +12,7 @@ from app.repositories import (
     search_players,
 )
 from app.runtime import analyze_match, generate_teams
-from app.schemas import HealthResponse
+from app.schemas import AuthResponse, HealthResponse, LogoutRequest, ProviderLoginRequest, RefreshRequest
 from app.db import analytics_db
 
 
@@ -22,6 +23,28 @@ live_client = CricApiClient()
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+@app.post("/auth/provider-login", response_model=AuthResponse)
+def auth_provider_login(payload: ProviderLoginRequest):
+    return login_with_provider(payload.provider, payload.identity_token, payload.device_label)
+
+
+@app.post("/auth/refresh", response_model=AuthResponse)
+def auth_refresh(payload: RefreshRequest):
+    refreshed = refresh_session(payload.refresh_token)
+    return {**refreshed, "refresh_token": None}
+
+
+@app.post("/auth/logout")
+def auth_logout(payload: LogoutRequest):
+    revoke_refresh_token(payload.refresh_token)
+    return {"status": "ok"}
+
+
+@app.get("/auth/me")
+def auth_me(authorization: str | None = Header(default=None)):
+    return get_current_user_from_token(authorization)
 
 
 @app.get("/system/status")

@@ -1,0 +1,9 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" rx="220" fill="#F7F3EB"/>
+  <text x="140" y="560" fill="#D66E14" font-family="Georgia, serif" font-size="190" font-weight="700">C</text>
+  <text x="270" y="560" fill="#8D78C9" font-family="Georgia, serif" font-size="146" font-weight="600">Sense</text>
+  <path d="M210 664C278 664 300 600 360 600C425 600 430 720 500 720C567 720 580 614 646 614C701 614 719 694 780 694" stroke="#8D78C9" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="848" cy="694" r="54" fill="#F28C28"/>
+  <path d="M822 666C838 680 853 692 876 710" stroke="#FFF7EF" stroke-width="10" stroke-linecap="round"/>
+  <path d="M826 720C845 706 857 694 873 676" stroke="#FFF7EF" stroke-width="10" stroke-linecap="round"/>
+</svg>
