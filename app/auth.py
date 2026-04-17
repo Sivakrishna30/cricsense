@@ -263,3 +263,13 @@ def get_current_user_from_token(authorization: str | None) -> dict:
         if not row:
             raise HTTPException(status_code=401, detail="User not found")
         return dict(row)
+
+
+def delete_current_user_account(authorization: str | None) -> dict:
+    user = get_current_user_from_token(authorization)
+    with auth_db() as conn:
+        conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user["id"],))
+        conn.execute("DELETE FROM auth_identities WHERE user_id = ?", (user["id"],))
+        conn.execute("DELETE FROM users WHERE id = ?", (user["id"],))
+        conn.commit()
+    return {"status": "deleted"}

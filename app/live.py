@@ -32,6 +32,12 @@ class CricApiClient:
     def list_matches(self) -> dict[str, Any]:
         return self._get("matches", {"offset": 0})
 
+    def get_series_info(self, series_id: str) -> dict[str, Any]:
+        return self._get("series_info", {"id": series_id})
+
+    def get_match_info(self, match_id: str) -> dict[str, Any]:
+        return self._get("match_info", {"offset": 0, "id": match_id})
+
     def get_match_summary(self, match_id: str) -> dict[str, Any] | None:
         payload = self.list_matches()
         for match in payload.get("data") or []:

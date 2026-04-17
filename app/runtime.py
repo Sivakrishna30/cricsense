@@ -595,6 +595,56 @@ def _team_payload(team_name: str, players: list[dict], metric: str) -> dict:
     }
 
 
+def _captain_suggestion_payload(players: list[dict]) -> list[dict]:
+    if not players:
+        return []
+    runtime_ranked = sorted(players, key=lambda item: item["runtime_score"], reverse=True)
+    upside_ranked = sorted(players, key=lambda item: item["upside_score"], reverse=True)
+    stability_ranked = sorted(players, key=lambda item: item["stability_score"], reverse=True)
+
+    suggestions = []
+    if len(runtime_ranked) >= 2:
+        suggestions.append(
+            {
+                "type": "safe_pair",
+                "captain": runtime_ranked[0]["player_name"],
+                "vice_captain": stability_ranked[0]["player_name"],
+                "reason": "Best for balanced builds using top runtime and stability signals.",
+            }
+        )
+    if len(upside_ranked) >= 2:
+        vice = runtime_ranked[0]["player_name"]
+        if upside_ranked[0]["player_name"] == vice and len(runtime_ranked) > 1:
+            vice = runtime_ranked[1]["player_name"]
+        suggestions.append(
+            {
+                "type": "upside_pair",
+                "captain": upside_ranked[0]["player_name"],
+                "vice_captain": vice,
+                "reason": "Better for higher-risk contests where upside matters more.",
+            }
+        )
+    if len(runtime_ranked) >= 3:
+        suggestions.append(
+            {
+                "type": "alt_pair",
+                "captain": runtime_ranked[1]["player_name"],
+                "vice_captain": runtime_ranked[2]["player_name"],
+                "reason": "Alternative pair if you want to avoid the most obvious captain pick.",
+            }
+        )
+
+    deduped = []
+    seen = set()
+    for item in suggestions:
+        key = (item["captain"], item["vice_captain"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped[:3]
+
+
 def generate_teams(payload: dict) -> dict:
     analysis = analyze_match(payload)
     players = analysis["players"]
@@ -605,6 +655,8 @@ def generate_teams(payload: dict) -> dict:
         "match_name": analysis["match_name"],
         "favorite_team": analysis["favorite_team"],
         "conditions": analysis["conditions"],
+        "captain_suggestions": _captain_suggestion_payload(players),
+        "disclaimer": "These fantasy outputs are analytical suggestions only. Feel free to use your own instinct before finalizing captain and vice-captain.",
         "common_team_1": _team_payload("common_team_1", common, "runtime_score"),
         "common_team_2": _team_payload("common_team_2", common_alt, "runtime_score"),
         "risky_team": _team_payload("risky_team", risky, "upside_score"),

@@ -1,8 +1,12 @@
+from datetime import date
+
 from fastapi import Body, FastAPI, Header, HTTPException, Query
 
-from app.auth import get_current_user_from_token, login_with_provider, refresh_session, revoke_refresh_token
+from app.auth import delete_current_user_account, get_current_user_from_token, login_with_provider, refresh_session, revoke_refresh_token
 from app.live import CricApiClient
+from app.matchday import MatchdayService
 from app.match_context import get_batter_vs_bowler, get_player_vs_opponent, get_player_vs_venue
+from app.meta import TRANSPARENCY_PAYLOAD
 from app.repositories import (
     find_best_player_match,
     get_event_coverage,
@@ -18,6 +22,7 @@ from app.db import analytics_db
 
 app = FastAPI(title="CricSense Backend")
 live_client = CricApiClient()
+matchday_service = MatchdayService(live_client=live_client)
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -47,6 +52,11 @@ def auth_me(authorization: str | None = Header(default=None)):
     return get_current_user_from_token(authorization)
 
 
+@app.delete("/auth/me")
+def auth_delete_me(authorization: str | None = Header(default=None)):
+    return delete_current_user_account(authorization)
+
+
 @app.get("/system/status")
 def system_status():
     with analytics_db() as conn:
@@ -58,6 +68,11 @@ def system_status():
             "player_final_profiles": profile_count,
         }
     }
+
+
+@app.get("/meta/transparency")
+def meta_transparency():
+    return TRANSPARENCY_PAYLOAD
 
 
 @app.get("/players/search")
@@ -86,6 +101,19 @@ def player_splits(player_name: str, limit: int = 25):
 @app.get("/coverage/events")
 def coverage_events():
     return {"items": get_event_coverage()}
+
+
+@app.get("/matchday/ipl/today")
+def matchday_ipl_today(include_squads: bool = False, target_date: date | None = Query(default=None)):
+    return matchday_service.get_today_ipl_matches(target_date=target_date, include_squads=include_squads)
+
+
+@app.get("/matchday/ipl/matches/{match_id}")
+def matchday_ipl_match(match_id: str, include_squads: bool = True):
+    payload = matchday_service.get_match_detail(match_id, include_squads=include_squads)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return payload
 
 
 @app.get("/context/player-vs-venue")
