@@ -1,4 +1,3 @@
-import { mockAnalysis, mockHistory, mockMatchday, mockPlayer, mockTeams } from './mockData';
 import { MatchAnalysis, MatchConditionsInput, MatchdayMatch, MatchdayResponse, PlayerHistoryRow, PlayerSummary, TeamGeneration } from './types';
 
 const API_BASE_URL = 'http://192.168.0.4:8000';
@@ -16,27 +15,23 @@ export async function getTodayMatches(): Promise<MatchdayResponse> {
   return requestJson<MatchdayResponse>(`/matchday/ipl/today?target_date=${localDate}`);
 }
 
+export async function getCompletedMatches(): Promise<MatchdayResponse> {
+  return requestJson<MatchdayResponse>('/matchday/ipl/completed');
+}
+
 export async function getMatchDetail(matchId: string): Promise<MatchdayMatch> {
   return requestJson<MatchdayMatch>(`/matchday/ipl/matches/${encodeURIComponent(matchId)}?include_squads=true`);
 }
 
-function buildWeatherText(input: MatchConditionsInput) {
-  const parts = [`rain ${input.rainPercent || '0'}%`];
-  if (input.dew) {
-    parts.push('dew likely');
-  }
-  return parts.join(', ');
-}
-
 function buildAnalysisPayload(match: MatchdayMatch, conditions?: MatchConditionsInput) {
   return {
+    match_id: match.id,
     match_name: match.name,
     competition: 'Indian Premier League',
     venue: match.venue,
-    weather: conditions ? buildWeatherText(conditions) : '',
-    pitch_report: conditions?.pitchReport ?? '',
-    toss_winner: conditions?.tossWinner || null,
-    toss_decision: conditions?.tossWinner ? conditions.tossDecision : null,
+    dew: conditions?.dew || false,
+    pitch_surface: conditions?.pitchSurface || '',
+    toss_batting: conditions?.tossBatting || '',
     teams: (match.squads || []).map((team) => ({
       name: team.teamName || team.shortname || '',
       squad: (team.players || []).map((player) => player.name).filter(Boolean),
@@ -45,41 +40,43 @@ function buildAnalysisPayload(match: MatchdayMatch, conditions?: MatchConditions
 }
 
 export async function getMatchAnalysis(match: MatchdayMatch, conditions?: MatchConditionsInput): Promise<MatchAnalysis> {
-  try {
-    return await requestJson<MatchAnalysis>('/runtime/match-analysis', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildAnalysisPayload(match, conditions)),
-    });
-  } catch {
-    return mockAnalysis;
-  }
+  return await requestJson<MatchAnalysis>('/runtime/match-analysis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildAnalysisPayload(match, conditions)),
+  });
 }
 
 export async function getFantasyTeams(match: MatchdayMatch, conditions?: MatchConditionsInput): Promise<TeamGeneration> {
-  try {
-    return await requestJson<TeamGeneration>('/runtime/team-generation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildAnalysisPayload(match, conditions)),
-    });
-  } catch {
-    return mockTeams;
-  }
+  return await requestJson<TeamGeneration>('/runtime/team-generation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildAnalysisPayload(match, conditions)),
+  });
 }
 
 export async function getPlayerProfile(playerName: string): Promise<PlayerSummary> {
-  try {
-    return await requestJson<PlayerSummary>(`/players/${encodeURIComponent(playerName)}`);
-  } catch {
-    return { ...mockPlayer, player_name: playerName };
-  }
+  return await requestJson<PlayerSummary>(`/players/${encodeURIComponent(playerName)}`);
 }
 
 export async function getPlayerHistory(playerName: string): Promise<PlayerHistoryRow[]> {
+  const data = await requestJson<PlayerHistoryRow[]>(`/players/${encodeURIComponent(playerName)}/history`);
+  return Array.isArray(data) ? data : [];
+}
+
+export interface VenueStats {
+  venue?: string;
+  matches_sampled?: number;
+  avg_first_innings?: number;
+  avg_second_innings?: number;
+  chasing_win_percent?: number;
+}
+
+export async function getVenueStats(venue: string): Promise<VenueStats | null> {
   try {
-    return await requestJson<PlayerHistoryRow[]>(`/players/${encodeURIComponent(playerName)}/history?limit=8`);
+    const stats = await requestJson<VenueStats>(`/context/venue-stats?venue=${encodeURIComponent(venue)}`);
+    return stats.venue ? stats : null;
   } catch {
-    return mockHistory;
+    return null;
   }
 }

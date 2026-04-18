@@ -14,6 +14,7 @@ from app.repositories import (
     get_player_recent_history,
     get_player_style_splits,
     search_players,
+    get_venue_stats,
 )
 from app.runtime import analyze_match, generate_teams
 from app.schemas import AuthResponse, HealthResponse, LogoutRequest, ProviderLoginRequest, RefreshRequest
@@ -106,6 +107,9 @@ def coverage_events():
 @app.get("/matchday/ipl/today")
 def matchday_ipl_today(include_squads: bool = False, target_date: date | None = Query(default=None)):
     return matchday_service.get_today_ipl_matches(target_date=target_date, include_squads=include_squads)
+@app.get("/matchday/ipl/completed")
+def matchday_ipl_completed():
+    return matchday_service.get_completed_ipl_matches()
 
 
 @app.get("/matchday/ipl/matches/{match_id}")
@@ -131,13 +135,73 @@ def batter_vs_bowler(batter: str, bowler: str, years: int = 3):
     return get_batter_vs_bowler(batter, bowler, years)
 
 
+@app.get("/context/venue-stats")
+def venue_stats(venue: str):
+    return get_venue_stats(venue) or {}
+
+
 @app.post("/runtime/match-analysis")
 def runtime_match_analysis(payload: dict = Body(...)):
-    return analyze_match(payload)
+    from app.runtime import apply_differential_modifiers
+    mid = payload.get("match_id")
+    if mid:
+        from app.db import analytics_db
+        import json
+        with analytics_db() as conn:
+            row = conn.execute("SELECT match_analysis_json FROM precalculated_matches WHERE match_id = ? AND conditions_hash = 'default'", (mid, )).fetchone()
+            if row:
+                base_data = json.loads(row[0])
+                return apply_differential_modifiers(base_data, payload)
+    return apply_differential_modifiers(analyze_match(payload), payload)
+
+
+@app.get("/runtime/completed-insights")
+def get_completed_insights(match_id: str):
+    import json
+    from app.db import analytics_db
+    with analytics_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM completed_match_insights WHERE match_id = ?", (match_id,)
+        ).fetchone()
+    if not row:
+        return {
+            "match_id": match_id,
+            "status": "pending",
+            "message": "Data not available for that match, check tomorrow.",
+            "perfect_11": [],
+            "predicted_teams": None
+        }
+    row = dict(row)
+    return {
+        "match_id": match_id,
+        "match_name": row.get("match_name"),
+        "match_date": row.get("match_date"),
+        "perfect_11": json.loads(row["ipl_fantasy_11_json"] or "[]"),
+        "predicted_teams": {
+            "common_team_1": json.loads(row["cricsense_team1_json"]) if row.get("cricsense_team1_json") else None,
+            "common_team_2": json.loads(row["cricsense_team2_json"]) if row.get("cricsense_team2_json") else None,
+            "risky_team": json.loads(row["cricsense_risky_json"]) if row.get("cricsense_risky_json") else None,
+        }
+    }
 
 
 @app.post("/runtime/team-generation")
 def runtime_team_generation(payload: dict = Body(...)):
+    from app.runtime import apply_differential_modifiers, generate_teams, analyze_match
+    import json
+    mid = payload.get("match_id")
+    if mid:
+        from app.db import analytics_db
+        with analytics_db() as conn:
+            row = conn.execute(
+                "SELECT match_analysis_json, team_generation_json FROM precalculated_matches WHERE match_id = ? AND conditions_hash = 'default'",
+                (mid,)
+            ).fetchone()
+            if row and row["team_generation_json"]:
+                # Use precomputed teams, only reapply differential for user conditions
+                base_analysis = json.loads(row["match_analysis_json"])
+                modified = apply_differential_modifiers(base_analysis, payload)
+                return generate_teams(modified)
     return generate_teams(payload)
 
 

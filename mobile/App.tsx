@@ -1,4 +1,4 @@
-﻿import { StatusBar } from 'expo-status-bar';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,7 +11,9 @@ import {
   View,
 } from 'react-native';
 
-import { getFantasyTeams, getMatchAnalysis, getMatchDetail, getPlayerHistory, getPlayerProfile, getTodayMatches } from './src/api';
+import { CompletedMatchScreen } from './src/CompletedMatchScreen';
+
+import { getFantasyTeams, getMatchAnalysis, getMatchDetail, getPlayerHistory, getPlayerProfile, getTodayMatches, getCompletedMatches, getVenueStats } from './src/api';
 import { colors } from './src/theme';
 import {
   GeneratedTeam,
@@ -28,6 +30,31 @@ import {
 const disclaimer =
   'CricSense is an analytical support tool. These teams are based on available data and context, not a promise of winnings. Please apply your own judgment before entering contests.';
 
+const TEAM_THEMES: Record<string, string> = {
+  'Chennai Super Kings': '#FFF9C4',
+  'Mumbai Indians': '#E3F2FD',
+  'Kolkata Knight Riders': '#F3E5F5',
+  'Royal Challengers Bengaluru': '#FFEBEE',
+  'Sunrisers Hyderabad': '#FFF3E0',
+  'Gujarat Titans': '#E8EAF6',
+  'Lucknow Super Giants': '#FCE4EC',
+  'Delhi Capitals': '#E1F5FE',
+  'Rajasthan Royals': '#E3F2FD',
+  'Punjab Kings': '#FFF5F5',
+};
+
+const ROLE_ORDER: Record<string, number> = {
+  'WK': 0,
+  'BAT': 1,
+  'AR': 2,
+  'BWL': 3
+};
+
+const formatTeamTitle = (id: string) => {
+  if (id === 'risky_team') return 'Gamble Team:';
+  return id.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ') + ':';
+};
+
 function scoreTone(score: number) {
   if (score >= 80) return { color: colors.success };
   if (score >= 65) return { color: colors.primary };
@@ -37,6 +64,7 @@ function scoreTone(score: number) {
 export default function App() {
   const [screen, setScreen] = useState<Screen>({ name: 'home' });
   const [matchday, setMatchday] = useState<MatchdayResponse | null>(null);
+  const [completedMatches, setCompletedMatches] = useState<MatchdayResponse | null>(null);
   const [loadingHome, setLoadingHome] = useState(true);
   const [homeError, setHomeError] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<MatchdayMatch | null>(null);
@@ -47,10 +75,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [conditions, setConditions] = useState<MatchConditionsInput>({
     dew: false,
-    rainPercent: '0',
-    pitchReport: '',
-    tossWinner: '',
-    tossDecision: 'bowl',
+    pitchSurface: '',
+    tossBatting: '',
   });
 
   useEffect(() => {
@@ -62,10 +88,13 @@ export default function App() {
     setHomeError(null);
     try {
       const payload = await getTodayMatches();
+      const completed = await getCompletedMatches();
       setMatchday(payload);
+      setCompletedMatches(completed);
     } catch (error) {
       setMatchday(null);
-      setHomeError('Unable to fetch today’s live match list. Make sure the backend is running and your phone is on the same Wi-Fi.');
+      setCompletedMatches(null);
+      setHomeError('Unable to fetch match lists. Make sure the backend is running and your phone is on the same Wi-Fi.');
     } finally {
       setLoadingHome(false);
     }
@@ -79,6 +108,8 @@ export default function App() {
       setSelectedMatch(detail);
       const runtime = await getMatchAnalysis(detail, conditions);
       setAnalysis(runtime);
+    } catch {
+      alert("Failed to load match or analysis.");
     } finally {
       setBusy(false);
     }
@@ -89,6 +120,8 @@ export default function App() {
     setBusy(true);
     try {
       setAnalysis(await getMatchAnalysis(selectedMatch, conditions));
+    } catch {
+      alert("Could not refresh analysis with new inputs.");
     } finally {
       setBusy(false);
     }
@@ -103,18 +136,22 @@ export default function App() {
     setBusy(true);
     try {
       setTeams(await getFantasyTeams(detail, conditions));
+    } catch {
+      alert("Could not load fantasy teams.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function openPlayer(playerName: string) {
+  async function openPlayer(playerName: string, returnTo?: Screen) {
     setBusy(true);
-    setScreen({ name: 'player', playerName });
+    setScreen({ name: 'player', playerName, returnTo });
     try {
       const [profile, history] = await Promise.all([getPlayerProfile(playerName), getPlayerHistory(playerName)]);
       setPlayerProfile(profile);
       setPlayerHistory(history);
+    } catch {
+      alert(`Could not load details for ${playerName}.`);
     } finally {
       setBusy(false);
     }
@@ -135,27 +172,46 @@ export default function App() {
           onConditionsChange={setConditions}
           onRefreshAnalysis={() => void refreshAnalysis()}
           onFantasyTeams={() => void openTeams(screen.matchId)}
-          onPlayerPress={(name) => void openPlayer(name)}
+          onPlayerPress={(name) => void openPlayer(name, { name: 'match', matchId: screen.matchId })}
         />
       );
     }
+    if (screen.name === 'completed-match') {
+        return <CompletedMatchScreen matchId={screen.matchId} onBack={() => setScreen({ name: 'home' })} />;
+    }
     if (screen.name === 'teams') {
-      return <TeamsScreen teams={teams} busy={busy} onBack={() => setScreen({ name: 'match', matchId: screen.matchId })} />;
+      return (
+        <TeamsScreen
+          teams={teams}
+          busy={busy}
+          onBack={() => setScreen({ name: 'match', matchId: screen.matchId })}
+          onPlayerPress={(name) => void openPlayer(name, { name: 'teams', matchId: screen.matchId })}
+        />
+      );
     }
     if (screen.name === 'player') {
-      return <PlayerScreen profile={playerProfile} history={playerHistory} busy={busy} onBack={() => setScreen({ name: 'home' })} />;
+      return (
+        <PlayerScreen
+          profile={playerProfile}
+          history={playerHistory}
+          busy={busy}
+          onBack={() => setScreen(screen.returnTo || { name: 'home' })}
+        />
+      );
     }
     return (
         <HomeScreen
           matchday={matchday}
+          completedMatches={completedMatches}
           loading={loadingHome}
           error={homeError}
           onOpenMatch={(id) => void openMatch(id)}
           onOpenSettings={() => setScreen({ name: 'settings' })}
           onRetry={() => void loadHome()}
+          setScreen={setScreen}
         />
       );
-  }, [analysis, busy, conditions, loadingHome, matchday, playerHistory, playerProfile, screen, selectedMatch, teams]);
+  }, [analysis, busy, conditions, loadingHome, matchday, completedMatches, playerHistory, playerProfile, screen, selectedMatch, teams]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -167,18 +223,22 @@ export default function App() {
 
 function HomeScreen({
   matchday,
+  completedMatches,
   loading,
   error,
   onOpenMatch,
   onOpenSettings,
   onRetry,
+  setScreen,
 }: {
   matchday: MatchdayResponse | null;
+  completedMatches: MatchdayResponse | null;
   loading: boolean;
   error: string | null;
   onOpenMatch: (matchId: string) => void;
   onOpenSettings: () => void;
   onRetry: () => void;
+  setScreen: any;
 }) {
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -220,14 +280,39 @@ function HomeScreen({
           <Text style={styles.sectionText}>No live IPL matches were returned for today’s device date.</Text>
         </View>
       ) : (
-        (matchday?.matches || []).map((match) => (
-          <Pressable key={match.id} style={styles.matchCard} onPress={() => onOpenMatch(match.id)}>
-            <Text style={styles.matchTitle}>{match.teams.join(' vs ')}</Text>
-            <Text style={styles.matchMeta}>{match.venue}</Text>
-            <Text style={styles.matchMeta}>{match.status}</Text>
-            <Text style={styles.weatherText}>Open match to add dew, rain %, and pitch note if needed.</Text>
-          </Pressable>
-        ))
+        (matchday?.matches || []).map((match) => {
+          let timeDisplay = match.status;
+          if (match.date_time_gmt) {
+            const raw = match.date_time_gmt.endsWith('Z') ? match.date_time_gmt : match.date_time_gmt + 'Z';
+            const d = new Date(raw);
+            if (!isNaN(d.getTime())) {
+              timeDisplay = d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST';
+            }
+          }
+          return (
+            <Pressable key={match.id} style={styles.matchCard} onPress={() => onOpenMatch(match.id)}>
+              <Text style={styles.matchTitle}>{match.teams.join(' vs ')}</Text>
+              <Text style={styles.matchMeta}>{timeDisplay} · {match.venue}</Text>
+              <Text style={styles.weatherText}>Open match to add dew, rain, and pitch note if needed.</Text>
+            </Pressable>
+          );
+        })
+      )}
+
+      {!loading && !error && (completedMatches?.matches || []).length > 0 && (
+        <View style={{ marginTop: 20 }}>
+          <View style={styles.heroHeader}>
+            <Text style={styles.heroTitle}>Completed IPL matches</Text>
+            <Text style={styles.heroText}>View historical model accuracy percentages compared to actual dream 11 scores.</Text>
+          </View>
+          {completedMatches!.matches.map((match) => (
+            <Pressable key={match.id} style={styles.matchCard} onPress={() => setScreen({ name: 'completed-match', matchId: match.id })}>
+              <Text style={styles.matchTitle}>{match.teams.join(' vs ')}</Text>
+              <Text style={styles.matchMeta}>{match.date} · {match.venue}</Text>
+              <Text style={styles.highlightText}>View Accuracy Insights</Text>
+            </Pressable>
+          ))}
+        </View>
       )}
     </ScrollView>
   );
@@ -254,6 +339,16 @@ function MatchScreen({
   onFantasyTeams: () => void;
   onPlayerPress: (playerName: string) => void;
 }) {
+  const [venueStats, setVenueStats] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (match?.venue) {
+      getVenueStats(match.venue).then((stats) => {
+        if (stats) setVenueStats(stats);
+      });
+    }
+  }, [match?.venue]);
+
   const squadPlayers = analysis?.players || [];
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -263,77 +358,75 @@ function MatchScreen({
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>{match?.venue}</Text>
         <Text style={styles.sectionText}>Skip auto weather for now. Add simple conditions before generating teams.</Text>
-        <Text style={styles.sectionText}>Squad source: {match?.squad_source || 'pending'}</Text>
+        <Text style={styles.sectionText}>
+          Squad source: {match?.squad_source === 'actual' 
+            ? 'Actual Squad (Confirmed post-toss)' 
+            : 'Generated based on probable 11 from previous match squad'}
+        </Text>
         {analysis?.favorite_team ? <Text style={styles.highlightText}>Model lean: {analysis.favorite_team}</Text> : null}
       </View>
+
+      {venueStats && (
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Venue intelligence</Text>
+          <Text style={styles.matchMeta}>Average 1st innings score: {venueStats.avg_first_innings}</Text>
+          <Text style={styles.matchMeta}>Avg 2nd innings: {venueStats.avg_second_innings}</Text>
+          <Text style={styles.matchMeta}>Chasers win rate: {venueStats.chasing_win_percent}%</Text>
+          <Text style={styles.subtle}>Matches sampled: {venueStats.matches_sampled}</Text>
+        </View>
+      )}
 
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Optional match inputs</Text>
         <Text style={styles.sectionText}>These are optional. Users can quickly check Google and type simple match conditions.</Text>
+        <Text style={styles.inputLabel}>Dew probability</Text>
         <View style={styles.toggleRow}>
           <Pressable
             style={[styles.choiceChip, conditions.dew ? styles.choiceChipActive : undefined]}
             onPress={() => onConditionsChange({ ...conditions, dew: true })}
           >
-            <Text style={[styles.choiceChipText, conditions.dew ? styles.choiceChipTextActive : undefined]}>Dew yes</Text>
+            <Text style={[styles.choiceChipText, conditions.dew ? styles.choiceChipTextActive : undefined]}>Yes</Text>
           </Pressable>
           <Pressable
             style={[styles.choiceChip, !conditions.dew ? styles.choiceChipActive : undefined]}
             onPress={() => onConditionsChange({ ...conditions, dew: false })}
           >
-            <Text style={[styles.choiceChipText, !conditions.dew ? styles.choiceChipTextActive : undefined]}>Dew no</Text>
+            <Text style={[styles.choiceChipText, !conditions.dew ? styles.choiceChipTextActive : undefined]}>No</Text>
           </Pressable>
         </View>
 
-        <Text style={styles.inputLabel}>Rain chance %</Text>
-        <TextInput
-          style={styles.textInput}
-          keyboardType="number-pad"
-          value={conditions.rainPercent}
-          onChangeText={(value) => onConditionsChange({ ...conditions, rainPercent: value.replace(/[^0-9]/g, '').slice(0, 3) })}
-          placeholder="0"
-          placeholderTextColor={colors.muted}
-        />
-
-        <Text style={styles.inputLabel}>Pitch note</Text>
-        <TextInput
-          style={[styles.textInput, styles.textArea]}
-          multiline
-          value={conditions.pitchReport}
-          onChangeText={(value) => onConditionsChange({ ...conditions, pitchReport: value })}
-          placeholder="Flat batting pitch, spin if dry, or seam early"
-          placeholderTextColor={colors.muted}
-        />
-
-        <Text style={styles.inputLabel}>Toss winner</Text>
-        <View style={styles.toggleRow}>
-          {(match?.teams || []).map((teamName) => {
-            const active = conditions.tossWinner === teamName;
-            return (
-              <Pressable
-                key={teamName}
-                style={[styles.choiceChip, active ? styles.choiceChipActive : undefined]}
-                onPress={() => onConditionsChange({ ...conditions, tossWinner: teamName })}
-              >
-                <Text style={[styles.choiceChipText, active ? styles.choiceChipTextActive : undefined]}>{teamName}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <Text style={styles.inputLabel}>Toss decision</Text>
+        <Text style={styles.inputLabel}>Surface</Text>
         <View style={styles.toggleRow}>
           <Pressable
-            style={[styles.choiceChip, conditions.tossDecision === 'bat' ? styles.choiceChipActive : undefined]}
-            onPress={() => onConditionsChange({ ...conditions, tossDecision: 'bat' })}
+            style={[styles.choiceChip, conditions.pitchSurface === 'wet' ? styles.choiceChipActive : undefined]}
+            onPress={() => onConditionsChange({ ...conditions, pitchSurface: 'wet' })}
           >
-            <Text style={[styles.choiceChipText, conditions.tossDecision === 'bat' ? styles.choiceChipTextActive : undefined]}>Bat first</Text>
+            <Text style={[styles.choiceChipText, conditions.pitchSurface === 'wet' ? styles.choiceChipTextActive : undefined]}>Wet Surface</Text>
           </Pressable>
           <Pressable
-            style={[styles.choiceChip, conditions.tossDecision === 'bowl' ? styles.choiceChipActive : undefined]}
-            onPress={() => onConditionsChange({ ...conditions, tossDecision: 'bowl' })}
+            style={[styles.choiceChip, conditions.pitchSurface === 'dry' ? styles.choiceChipActive : undefined]}
+            onPress={() => onConditionsChange({ ...conditions, pitchSurface: 'dry' })}
           >
-            <Text style={[styles.choiceChipText, conditions.tossDecision === 'bowl' ? styles.choiceChipTextActive : undefined]}>Bowl first</Text>
+            <Text style={[styles.choiceChipText, conditions.pitchSurface === 'dry' ? styles.choiceChipTextActive : undefined]}>Dry Surface</Text>
+          </Pressable>
+        </View>
+
+        <Text style={styles.inputLabel}>Toss Batting First</Text>
+        <View style={styles.toggleRow}>
+          {(match?.teams || []).map((team) => (
+            <Pressable
+              key={team}
+              style={[styles.choiceChip, conditions.tossBatting === team ? styles.choiceChipActive : undefined]}
+              onPress={() => onConditionsChange({ ...conditions, tossBatting: team })}
+            >
+              <Text style={[styles.choiceChipText, conditions.tossBatting === team ? styles.choiceChipTextActive : undefined]}>{team} bats</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            style={[styles.choiceChip, !conditions.tossBatting ? styles.choiceChipActive : undefined]}
+            onPress={() => onConditionsChange({ ...conditions, tossBatting: '' })}
+          >
+            <Text style={[styles.choiceChipText, !conditions.tossBatting ? styles.choiceChipTextActive : undefined]}>Unknown</Text>
           </Pressable>
         </View>
 
@@ -386,12 +479,23 @@ function TeamsScreen({
   teams,
   busy,
   onBack,
+  onPlayerPress,
 }: {
   teams: TeamGeneration | null;
   busy: boolean;
   onBack: () => void;
+  onPlayerPress: (playerName: string) => void;
 }) {
   const list: GeneratedTeam[] = teams ? [teams.common_team_1, teams.common_team_2, teams.risky_team] : [];
+  
+  const sortPlayers = (players: any[]) => {
+    return [...players].sort((a, b) => {
+      const orderA = ROLE_ORDER[a.fantasy_category] ?? 99;
+      const orderB = ROLE_ORDER[b.fantasy_category] ?? 99;
+      return orderA - orderB;
+    });
+  };
+
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <BackHeader title="Fantasy teams" onBack={onBack} />
@@ -418,16 +522,26 @@ function TeamsScreen({
 
       {list.map((team) => (
         <View key={team.team_type} style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>{team.team_type.replaceAll('_', ' ')}</Text>
+          <Text style={styles.sectionTitle}>{formatTeamTitle(team.team_type)}</Text>
           <Text style={styles.sectionText}>Captain: {team.captain || 'TBD'}</Text>
           <Text style={styles.sectionText}>Vice-captain: {team.vice_captain || 'TBD'}</Text>
-          {team.players.map((player) => (
-            <View key={player.player_name} style={styles.teamPlayerRow}>
-              <Text style={styles.teamPlayerName}>{player.player_name}</Text>
+          {sortPlayers(team.players).map((player) => (
+            <Pressable 
+              key={player.player_name} 
+              style={[
+                styles.teamPlayerRow, 
+                { backgroundColor: TEAM_THEMES[player.team_name] || 'transparent', borderRadius: 8, paddingHorizontal: 10, marginVertical: 2 }
+              ]} 
+              onPress={() => onPlayerPress(player.player_name)}
+            >
+              <Text style={styles.teamPlayerName}>
+                {player.player_name}{player.player_name === team.captain ? ' (C)' : player.player_name === team.vice_captain ? ' (VC)' : ''}
+                <Text style={{ fontWeight: '400', color: colors.muted }}> - {player.team_name}</Text>
+              </Text>
               <Text style={styles.teamPlayerMeta}>
                 {player.fantasy_category} · {Math.round(player.runtime_score)}
               </Text>
-            </View>
+            </Pressable>
           ))}
         </View>
       ))}
@@ -487,7 +601,11 @@ function PlayerScreen({
               <Text style={styles.matchMeta}>{row.match_date} · {row.venue}</Text>
             </View>
             <Text style={styles.teamPlayerMeta}>
-              {row.runs != null ? `${row.runs} (${row.balls || 0})` : `${row.wickets || 0} wkts`}
+              {profile?.role_profile === 'bowler' 
+                ? `${row.wickets != null ? row.wickets : 0}/${row.runs_conceded != null ? row.runs_conceded : '?'}`
+                : profile?.role_profile === 'all_rounder'
+                ? `${row.runs != null ? row.runs : 0}(${row.balls || 0}) • ${row.wickets != null ? row.wickets : 0}/${row.runs_conceded != null ? row.runs_conceded : '?'}`
+                : `${row.runs != null ? row.runs : 0} (${row.balls || 0})`}
             </Text>
           </View>
         ))}
@@ -614,20 +732,18 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   heroHeader: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: 22,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    marginBottom: 8,
   },
   heroTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
     color: colors.text,
   },
   heroText: {
     color: colors.muted,
-    marginTop: 8,
+    marginTop: 6,
     lineHeight: 20,
   },
   matchCard: {

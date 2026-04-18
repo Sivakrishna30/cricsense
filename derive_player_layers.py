@@ -372,13 +372,28 @@ def bowling_row_score(row: dict) -> float:
 
 
 def classify_recent_role(recent_bat: list[sqlite3.Row], recent_bowl: list[sqlite3.Row]) -> tuple[str, float, float]:
-    bat_innings = sum(r["did_bat"] for r in recent_bat)
-    bat_balls = sum(r["balls"] for r in recent_bat)
-    bowl_innings = sum(r["did_bowl"] for r in recent_bowl)
-    bowl_balls = sum(r["legal_balls_bowled"] for r in recent_bowl)
-    if bat_innings >= 4 and bowl_innings >= 4 and bowl_balls >= 48:
-        return "all_rounder", 0.55, 0.45
-    if bowl_innings >= 5 and bowl_balls >= 60 and bat_balls < 120:
+    bat_balls = sum(r["balls"] or 0 for r in recent_bat)
+    bowl_balls = sum(r["legal_balls_bowled"] or 0 for r in recent_bowl)
+    
+    # Volume Ratios
+    # 1. Pure Bowler: Bowling volume is > 5x batting volume
+    if bowl_balls >= 24:
+        if bat_balls == 0 or (bowl_balls / max(bat_balls, 1)) > 5.0:
+            return "bowler", 0.05, 0.95
+            
+    # 2. Pure Batter: Batting volume is > 2.5x bowling volume (e.g. Abhishek Sharma)
+    if bat_balls >= 24:
+        if bowl_balls == 0 or (bat_balls / max(bowl_balls, 1)) > 2.5:
+            return "batter", 0.95, 0.05
+            
+    # 3. All Rounder: Significant balanced activity in both disciplines
+    if bat_balls >= 48 and bowl_balls >= 48:
+        return "all_rounder", 0.50, 0.50
+         
+    # 4. Fallback: Highest volume wins for players with trace activity
+    if bat_balls > (bowl_balls * 2): # Slight bias towards batter in low-sample cases
+        return "batter", 0.90, 0.10
+    if bowl_balls > 12:
         return "bowler", 0.10, 0.90
     return "batter", 0.90, 0.10
 
@@ -486,14 +501,46 @@ def compute_player_profile(player_name: str, maps: dict) -> tuple:
     )
     long_term_floor_score = clip(long_term_batter_floor * batting_weight + long_term_bowler_floor * bowling_weight)
 
+    # 1. Exponential Recency Weighting Logic
+    # We order matches by date (0 = newest) and apply decay factor 0.85^i
+    decay_factor = 0.85
+    
+    weighted_runs = 0.0
+    weighted_balls = 0.0
+    weighted_innings_count = 0.0
+    for i, row in enumerate(recent_bat):
+        w = decay_factor ** i
+        weighted_runs += (row["runs"] or 0) * w
+        weighted_balls += (row["balls"] or 0) * w
+        weighted_innings_count += (row["did_bat"] or 0) * w
+    
+    weighted_recent_sr = safe_div(weighted_runs * 100, weighted_balls) if weighted_balls else 0.0
+    weighted_runs_per_inn = safe_div(weighted_runs, weighted_innings_count) if weighted_innings_count else 0.0
+
     recent_batting_score = clip(
-        norm(min(recent_runs, 500), 260) * 0.45
-        + norm(min(recent_sr, 180), 140) * 0.30
-        + norm(min(safe_div(recent_runs, max(recent_bat_innings, 1)), 70), 28) * 0.25
+        norm(min(weighted_runs, 400), 200) * 0.40 # High weight on bulk runs (weighted)
+        + norm(min(weighted_recent_sr, 180), 140) * 0.35 
+        + norm(min(weighted_runs_per_inn, 60), 25) * 0.25
     )
+
+    weighted_wickets = 0.0
+    weighted_runs_conceded = 0.0
+    weighted_legal_balls = 0.0
+    weighted_bowl_innings_count = 0.0
+    for i, row in enumerate(recent_bowl):
+        w = decay_factor ** i
+        weighted_wickets += (row["wickets"] or 0) * w
+        weighted_runs_conceded += (row["runs_conceded"] or 0) * w
+        weighted_legal_balls += (row["legal_balls_bowled"] or 0) * w
+        weighted_bowl_innings_count += (row["did_bowl"] or 0) * w
+
+    weighted_recent_econ = safe_div(weighted_runs_conceded * 6, weighted_legal_balls) if weighted_legal_balls else 9.0
+    weighted_recent_sr_bowl = safe_div(weighted_legal_balls, weighted_wickets) if weighted_wickets else 30.0
+
     recent_bowling_score = clip(
-        norm(min(recent_wickets, 25), 10) * 0.60
-        + norm(max(0.1, 8 / max(recent_econ, 1)), 1) * 0.40
+        norm(min(weighted_wickets, 15), 6) * 0.50
+        + norm(max(0.1, 8 / max(weighted_recent_econ, 1)), 1) * 0.30
+        + norm(max(0.1, 24 / max(weighted_recent_sr_bowl, 1)), 1) * 0.20
     )
     recent_form_score = clip(recent_batting_score * batting_weight + recent_bowling_score * bowling_weight)
 
@@ -690,12 +737,13 @@ def compute_player_profile(player_name: str, maps: dict) -> tuple:
         tags.append("death_over_specialist")
     if role_profile == "bowler" and death_rows["wickets"] >= 10:
         tags.append("death_over_specialist")
-    if pace_matchup_score >= spin_matchup_score + 12:
-        weakness_bits.append("weak on spin")
-        tags.append("spin_risk")
-    elif spin_matchup_score >= pace_matchup_score + 12:
-        weakness_bits.append("weak on pace")
-        tags.append("pace_risk")
+    if role_profile in ("batter", "all_rounder"):
+        if pace_matchup_score >= spin_matchup_score + 12:
+            weakness_bits.append("weak on spin")
+            tags.append("spin_risk")
+        elif spin_matchup_score >= pace_matchup_score + 12:
+            weakness_bits.append("weak on pace")
+            tags.append("pace_risk")
     if pressure_score >= 60:
         tags.append("clutch")
     if commentary_rows >= 8 and commentary_pressure >= 55:
@@ -708,12 +756,24 @@ def compute_player_profile(player_name: str, maps: dict) -> tuple:
         tags.append("reliable batter")
     if role_profile == "bowler" and recent_bowl_innings and safe_div(recent_wickets, recent_bowl_innings) >= 1:
         tags.append("wicket_taker")
+    
+    play_type = pick_play_type(role_profile, attack_intent_score, pressure_score, death_rows)
+    
+    # New Intelligence Tags
+    if role_profile == "bowler":
+        if weighted_recent_econ < 7.2 and weighted_legal_balls > 48:
+            tags.append("economy_expert")
+        if weighted_recent_sr_bowl < 15.0 and weighted_wickets > 5:
+            tags.append("strike_bolt")
+            
     if role_profile == "all_rounder":
-        tags.append("two_way_points")
+        if recent_batting_score > 65 and recent_bowling_score > 65:
+            tags.append("elite_ar")
+        if play_type == "finisher" and weighted_legal_balls > 48:
+            tags.append("finishing_ar")
     tags = list(dict.fromkeys(tags))[:6]
 
     weakness_summary = ", ".join(weakness_bits[:2])
-    play_type = pick_play_type(role_profile, attack_intent_score, pressure_score, death_rows)
 
     return (
         player_name,
@@ -742,9 +802,16 @@ def compute_player_profile(player_name: str, maps: dict) -> tuple:
     )
 
 
-def derive_player_profiles(read_connection: sqlite3.Connection, write_connection: sqlite3.Connection) -> None:
+def derive_player_profiles(read_connection: sqlite3.Connection, write_connection: sqlite3.Connection, target_players: list[str] = None) -> None:
     maps = load_maps(read_connection, write_connection)
-    players = sorted(set(maps["batting"]) | set(maps["bowling"]) | set(maps["splits"]))
+    all_players = sorted(set(maps["batting"]) | set(maps["bowling"]) | set(maps["splits"]))
+    
+    if target_players:
+        players = [p for p in all_players if p in target_players]
+        print(f"Targeting {len(players)} specific players for derivation...")
+    else:
+        players = all_players
+        print(f"Deriving profiles for all {len(players)} players...")
     insert_sql = """
         INSERT INTO player_final_profiles (
             player_name, role_profile, play_type, batting_style_hint, bowling_style_hint,

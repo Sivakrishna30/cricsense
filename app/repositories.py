@@ -84,10 +84,25 @@ def get_player_recent_history(player_name: str, limit: int = 10):
             """,
             (player_name, limit),
         ).fetchall()
-        return {
-            "batting": [dict(row) for row in batting],
-            "bowling": [dict(row) for row in bowling],
-        }
+        
+        events = {}
+        for row in batting:
+            d = dict(row)
+            events[d["match_date"]] = d
+
+        for row in bowling:
+            d = dict(row)
+            if d["match_date"] in events:
+                events[d["match_date"]]["wickets"] = d["wickets"]
+                events[d["match_date"]]["runs_conceded"] = d["runs_conceded"]
+                events[d["match_date"]]["legal_balls_bowled"] = d["legal_balls_bowled"]
+            else:
+                d["runs"] = None
+                d["balls"] = None
+                events[d["match_date"]] = d
+                
+        merged = sorted(events.values(), key=lambda x: x["match_date"], reverse=True)
+        return merged[:limit]
 
 
 def get_player_style_splits(player_name: str, limit: int = 25):
@@ -172,3 +187,29 @@ def find_player_match_strict(name: str):
         row["tags"] = json.loads(row.pop("tags_json"))
         row["canonical_name"] = {v: k for k, v in aliases.items()}.get(row["player_name"], row["player_name"])
         return row
+
+def get_venue_stats(venue_name: str):
+    with analytics_db() as conn:
+        row = conn.execute("SELECT * FROM venue_stats WHERE venue = ?", (venue_name,)).fetchone()
+        if row:
+            return dict(row)
+            
+        venues = conn.execute("SELECT venue FROM venue_stats").fetchall()
+        v_lower = venue_name.lower().replace(".", "").replace(",", "")
+        ignore = {"stadium", "cricket", "international", "association", "ground", "sports"}
+        w1 = {w for w in v_lower.split() if len(w) > 3 and w not in ignore}
+        
+        best_match = None
+        best_score = 0
+        for v in venues:
+            db_v = v[0].lower().replace(".", "").replace(",", "")
+            w2 = {w for w in db_v.split() if len(w) > 3 and w not in ignore}
+            score = len(w1.intersection(w2))
+            if score > best_score:
+                best_score = score
+                best_match = v[0]
+                
+        if best_match and best_score >= 1:
+            return dict(conn.execute("SELECT * FROM venue_stats WHERE venue = ?", (best_match,)).fetchone())
+            
+        return None

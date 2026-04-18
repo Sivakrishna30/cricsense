@@ -202,20 +202,36 @@ class MatchdayService:
         lead = timedelta(minutes=settings.squad_refresh_lead_minutes)
         return now_utc() >= match_dt - lead
 
+    def _apply_local_squads(self, squad_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        local_path = settings.base_dir / "app" / "ipl_recent_squads.json"
+        if not local_path.exists():
+            return squad_data
+        try:
+            local_squads = json.loads(local_path.read_text(encoding="utf-8"))
+        except Exception:
+            return squad_data
+        
+        for team in squad_data:
+            tname = team.get("teamName") or team.get("name")
+            if tname and tname in local_squads:
+                team["players"] = [{"name": p} for p in local_squads[tname]]
+        return squad_data
+
     def _match_squad(self, match_id: str, match_dt: datetime | None, force: bool = False) -> list[dict[str, Any]] | None:
         entry = _get_cache_entry("match_squad", match_id)
         if _is_entry_fresh(entry, settings.matchday_squad_ttl_seconds):
-            return entry["value"]
+            return self._apply_local_squads(entry["value"]) if entry.get("value") else None
         if not self._should_refresh_squad(match_dt, force):
-            return entry["value"] if entry else None
+            return self._apply_local_squads(entry["value"]) if entry else None
         try:
             payload = self.live_client.get_match_squad(match_id)
             data = payload.get("data")
             if data:
-                return _put_cache_entry("match_squad", match_id, data)
+                _put_cache_entry("match_squad", match_id, data)
+                return self._apply_local_squads(data)
         except Exception:
             pass
-        return entry["value"] if entry else None
+        return self._apply_local_squads(entry["value"]) if entry else None
 
     def get_today_ipl_matches(self, target_date: date | None = None, include_squads: bool = False) -> dict[str, Any]:
         target = target_date or now_utc().date()
@@ -226,6 +242,19 @@ class MatchdayService:
             enriched.append(self._build_match_payload(match, include_squads=include_squads))
         return {"date": target.isoformat(), "competition": "Indian Premier League", "matches": enriched}
 
+    def get_completed_ipl_matches(self) -> dict[str, Any]:
+        from datetime import datetime, timezone
+        schedule = self._series_schedule()
+        past_matches = [item for item in schedule if item.get("matchEnded")]
+        past_matches.sort(
+            key=lambda x: parse_match_datetime(x.get("dateTimeGMT")) or datetime.min.replace(tzinfo=timezone.utc), 
+            reverse=True
+        )
+        enriched = []
+        for match in past_matches[:5]:
+            enriched.append(self._build_match_payload(match, include_squads=False, skip_weather=True))
+        return {"competition": "Indian Premier League", "matches": enriched}
+
     def get_match_detail(self, match_id: str, include_squads: bool = True) -> dict[str, Any] | None:
         schedule = self._series_schedule()
         match = next((item for item in schedule if item.get("id") == match_id), None)
@@ -233,13 +262,19 @@ class MatchdayService:
             return None
         return self._build_match_payload(match, include_squads=include_squads)
 
-    def _build_match_payload(self, match: dict[str, Any], include_squads: bool) -> dict[str, Any]:
+    def _build_match_payload(self, match: dict[str, Any], include_squads: bool, skip_weather: bool = False) -> dict[str, Any]:
         match_id = match.get("id")
         info = self._match_info(match_id) if match_id else None
         base = info or match
         match_dt = parse_match_datetime(base.get("dateTimeGMT"))
-        weather = self.weather_client.get_match_weather(base.get("venue"), match_dt)
+        weather = None if skip_weather else self.weather_client.get_match_weather(base.get("venue"), match_dt)
         squads = self._match_squad(match_id, match_dt, force=include_squads) if match_id else None
+        teams = base.get("teams") or []
+        
+        if not squads and teams:
+            skeleton = [{"teamName": t} for t in teams]
+            squads = self._apply_local_squads(skeleton)
+            
         return {
             "id": match_id,
             "name": base.get("name"),
@@ -255,5 +290,5 @@ class MatchdayService:
             "match_ended": bool(base.get("matchEnded")),
             "weather": weather,
             "squads": squads,
-            "squad_source": "actual" if squads else "pending",
+            "squad_source": "actual" if self._should_refresh_squad(match_dt, force=False) else "probable",
         }

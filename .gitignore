@@ -16,5 +16,8 @@ Thumbs.db
 
 # Large local data
 *.db
+*.db-journal
+*.db-wal
 *.zip
 *.iml
+matchday_cache.json

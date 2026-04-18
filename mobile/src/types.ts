@@ -2,8 +2,9 @@ export type Screen =
   | { name: 'home' }
   | { name: 'match'; matchId: string }
   | { name: 'teams'; matchId: string }
-  | { name: 'player'; playerName: string }
-  | { name: 'settings' };
+  | { name: 'player'; playerName: string; returnTo?: Screen }
+  | { name: 'settings' }
+  | { name: 'completed-match'; matchId: string };
 
 export type MatchdayWeather = {
   city?: string;
@@ -38,6 +39,7 @@ export type MatchdayMatch = {
   weather?: MatchdayWeather | null;
   squads?: MatchSquadTeam[] | null;
   squad_source?: string;
+  match_ended?: boolean;
 };
 
 export type MatchdayResponse = {
@@ -46,12 +48,10 @@ export type MatchdayResponse = {
   matches: MatchdayMatch[];
 };
 
-export type MatchConditionsInput = {
+export interface MatchConditionsInput {
   dew: boolean;
-  rainPercent: string;
-  pitchReport: string;
-  tossWinner: string;
-  tossDecision: 'bat' | 'bowl';
+  pitchSurface: 'wet' | 'dry' | '';
+  tossBatting: string;
 };
 
 export type AnalyzedPlayer = {
