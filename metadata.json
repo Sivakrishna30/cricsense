@@ -1,0 +1,8 @@
+{
+  "name": "CricSense",
+  "description": "IPL fantasy cricket analysis and intelligence platform with match predictions, venue insights, and team generation",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
